@@ -278,9 +278,9 @@ struct App {
         std::wstring connection = !state.listening ? L"UDP port 47632 unavailable" :
             !state.paired ? L"Not paired" : state.connected ? L"Connected" : L"Waiting for readings";
         label(L"MacBook: " + connection);
-        wchar_t lux[64]{};
-        if (state.lux) std::swprintf(lux, std::size(lux), L"Ambient: %.1f lux", *state.lux);
-        label(state.lux ? lux : L"Ambient: \x2014");
+        wchar_t macLevel[64]{};
+        if (state.macPercent) std::swprintf(macLevel, std::size(macLevel), L"Mac display: %.1f%%", *state.macPercent);
+        label(state.macPercent ? macLevel : L"Mac display: \x2014");
         label(L"Monitor: " + (state.active.empty() ? (state.retrying ? std::wstring(L"Reconnecting") :
             std::wstring(L"Select a monitor")) : state.active));
         label(state.percent ? L"Brightness: " + std::to_wstring(*state.percent) +

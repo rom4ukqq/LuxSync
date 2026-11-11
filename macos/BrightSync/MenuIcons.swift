@@ -1,7 +1,7 @@
 import AppKit
 
 enum MenuIcon: CaseIterable, Hashable {
-    case sensor, connected, ambient, receiver, pair, forget, address
+    case sensor, connected, screenLevel, receiver, pair, forget, address
 
     private static let images = Dictionary(uniqueKeysWithValues: allCases.map { ($0, $0.draw()) })
 
@@ -43,7 +43,7 @@ enum MenuIcon: CaseIterable, Hashable {
                 spark(6.5, 11, 5, filled: self == .connected)
                 line([CGPoint(x: 8.5, y: 4), CGPoint(x: 12, y: 4), CGPoint(x: 15.5, y: 7.5)])
                 dot(15.5, 7.5)
-            case .ambient:
+            case .screenLevel:
                 spark(9, 9, 6, filled: false)
                 dot(14.5, 14.5)
             case .receiver:

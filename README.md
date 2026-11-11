@@ -2,16 +2,16 @@
 
 Download BrightSync for Mac and Windows from [GitHub Releases](https://github.com/rom4ukqq/LuxSync/releases).
 
-BrightSync uses an Apple Silicon MacBook's ambient light sensor to adjust the hardware brightness of a DDC/CI monitor on a nearby Windows 11 PC. It runs in the Mac menu bar and Windows tray. There are no accounts, background services, web UI, or external runtimes. The apps communicate directly on your LAN.
+BrightSync uses the brightness percentage of an Apple Silicon MacBook’s built-in display to control the hardware brightness of a DDC/CI monitor on a nearby Windows 11 PC. It runs in the Mac menu bar and Windows tray. There are no accounts, background services, web UI, or external runtimes. The apps communicate directly on your LAN.
 
 ## Set up
 
 1. Extract `BrightSync-Windows-x64.zip` to a permanent folder and run `BrightSync.exe`. Open its icon in the notification area (check the overflow arrow). Choose **Select Monitor** and select the display you want to control. The app waits for you to select one before making changes.
 2. In the Windows tray menu, choose **Show Pairing Code**. The eight-character code expires after three minutes.
 3. Extract `BrightSync-macOS-arm64.zip`, move `BrightSync.app` to Applications, and open it. Click the BrightSync sparkle in the menu bar, choose **Pair with Windows**, and enter the code. If macOS asks, allow [Local Network access](https://support.apple.com/guide/mac-help/control-access-to-your-local-network-on-mac-mchla4f49138/mac).
-4. Check that both menus show **Connected** and display a lux reading. Keep the MacBook lid open. Enable **Start at Login** and **Start with Windows** if you want either app to launch automatically. Both startup options default to off.
+4. Check that both menus show **Connected** and display the Mac screen brightness percentage. Keep the MacBook lid open. Enable **Start at Login** and **Start with Windows** if you want either app to launch automatically. Both startup options default to off.
 
-If the apps were already paired before this update, they can continue using the saved pairing. Starting a new pairing replaces it after the Mac enters the correct code. Use the same updated release on both computers to pair by code.
+If the apps were already paired before this update, they can continue using the saved pairing. Starting a new pairing replaces it after the Mac enters the correct code. Update both computers to version 1.4.0 or later for percentage-based sync.
 
 Both computers need IPv4 connectivity on the same LAN. If broadcast discovery does not work, run `ipconfig` on Windows and enter the PC's LAN IPv4 address under **Windows IP Address** on the Mac. Leave the field blank to return to automatic discovery. Discovery handles DHCP address changes; update a manually configured address if it changes. Guest Wi-Fi or client isolation may block peer traffic even with manual addressing.
 
@@ -27,9 +27,9 @@ For the MSI MAG 274QRFW, start with a direct DisplayPort or HDMI connection and 
 
 ## Calibration and storage
 
-The Windows receiver interpolates between the curve points, smooths lux with an exponential moving average, and applies the brightness offset and limits. It ignores small changes and ramps toward the target about one percentage point at a time, using the nearest available monitor levels. Steps are spaced 300 ms apart by default. In the Windows tray, use **Fallback Brightness** to set the level used after 12 seconds without a reading. The default is 40%. The same ramp applies to this level, within the configured brightness limits. If the monitor is unavailable, brightness control resumes when it reconnects. Disabling **Auto Brightness** pauses both modes.
+The Windows receiver uses the Mac display percentage as its target, with the configured offset and limits. It ramps about one percentage point at a time using the nearest available monitor levels. You can set an optional moving average and a threshold for small changes. Steps are spaced 300 ms apart by default. In the Windows tray, use **Fallback Brightness** to set the level used after 12 seconds without a reading. The default is 40%. The same ramp applies to this level, within the configured brightness limits. If the monitor is unavailable, brightness control resumes when it reconnects. Disabling **Auto Brightness** pauses both modes.
 
-On Windows, quit the receiver before editing `%LOCALAPPDATA%\BrightSync\settings.ini`, then restart it. Create the file if it doesn't exist. Omitted or invalid calibration values use the defaults below. Curve lux values must be strictly increasing. The ramp interval can be set from 250 to 2000 ms. Older `max_step` and `update_interval_ms` values are used to estimate the equivalent ramp speed unless you set `ramp_interval_ms`.
+On Windows, quit the receiver before editing `%LOCALAPPDATA%\BrightSync\settings.ini`, then restart it. Create the file if it doesn't exist. Omitted or invalid settings use the defaults below. The ramp interval can be set from 250 to 2000 ms. Older `max_step` and `update_interval_ms` values are used to estimate the equivalent ramp speed unless you set `ramp_interval_ms`.
 
 ```ini
 [general]
@@ -39,20 +39,19 @@ enabled=1
 min=10
 max=100
 offset=0
-smoothing=0.25
-hysteresis=3
+smoothing=1
+hysteresis=1
 ramp_interval_ms=300
 fallback_percent=40
-curve=0:10,10:15,50:25,150:40,300:55,600:75,1000:100
 ```
 
-The Mac uses per-user preferences (`com.brightsync.sender`). To change the default three-second polling interval, quit the app, run `defaults write com.brightsync.sender pollSeconds -float 3` with a value from 1 to 8, then reopen it. The app reports **Unavailable** if the sensor or the undocumented IOKit interface cannot be read.
+The Mac reads its built-in display once a second by default. To change the interval, quit the app and use `defaults write com.brightsync.sender pollSeconds -float 1` with a value from 1 to 8. It reconnects after a wake or network change and retries with a fresh connection if Windows stops responding. The menu shows **Unavailable** when the built-in screen is asleep or its brightness cannot be read. Reading the level uses macOS’s private DisplayServices framework.
 
-The code is used by BoringSSL’s SPAKE2 exchange to establish a separate 256-bit key. The key is stored in macOS Keychain and protected by Windows DPAPI for the current user. The [protocol](protocol/README.md) authenticates each reading and rejects replayed samples. Ambient readings are not encrypted on the LAN.
+The code is used by BoringSSL’s SPAKE2 exchange to establish a separate 256-bit key. The key is stored in macOS Keychain and protected by Windows DPAPI for the current user. The [protocol](protocol/README.md) authenticates each reading and rejects replayed samples. The LAN packets carry authenticated brightness values in clear text.
 
 ## Automatic updates
 
-Install version 1.3.0 from the release ZIP once to get the updater. On Windows, keep `BrightSyncUpdater.exe` next to `BrightSync.exe`. Install the app in a folder your account can write to. BrightSync runs the updater with your account permissions.
+If you already have version 1.3.0 with update access configured, use **Update Now** on both machines. For a fresh installation, download the current release ZIPs. On Windows, keep `BrightSyncUpdater.exe` next to `BrightSync.exe`. Install the app in a folder your account can write to. BrightSync runs the updater with your account permissions.
 
 1. In GitHub, create a [fine-grained personal access token](https://github.com/settings/personal-access-tokens/new). Select only `rom4ukqq/LuxSync` and grant **Contents → Read-only**.
 2. Open **GitHub Update Token** in BrightSync and paste the token on each computer. It is stored in macOS Keychain or Windows Credential Manager.
@@ -66,8 +65,8 @@ The updater verifies the release manifest with the Ed25519 public key built into
 - **Windows 11 x64:** Install the Visual Studio C++ build tools, a Windows SDK, Git, CMake, Ninja, and Go, then run `scripts/build-windows.ps1`. Set `BRIGHTSYNC_RUN_TESTS=1` to also run the C++ tests and UDP simulation (Python 3 required for tests).
 - **Cross build on macOS:** Install MinGW-w64, CMake, Ninja, and Go (e.g. `brew install mingw-w64 cmake ninja go`) and run `scripts/build-windows-cross.sh`.
 - ZIPs are written to `dist/`. The [build workflow](.github/workflows/build.yml) builds both ZIPs and runs simulations on GitHub-hosted macOS and Windows runners when the repo is pushed or the workflow is dispatched.
-- For an end-to-end simulation on two machines, quit the normal apps and start `BrightSync.exe --simulate` on Windows and `BrightSync.app/Contents/MacOS/BrightSync --simulate 145` on the Mac. The Windows app uses a mock monitor starting at 50%. Existing pairing works in simulation. A new pairing on the Windows simulation lasts until it exits. Re-pair in normal mode if you change the pairing during simulation. With the default curve the mock should approach 39%. Try another lux value by restarting the Mac simulation.
-- For a local sensor check, run `BrightSync.app/Contents/MacOS/BrightSync --read-sensor` with the lid open. Change the light near the screen and compare readings. On real hardware, also check brightness in the MSI on-screen menu, monitor power cycling, Mac sleep/wake, and both login options.
+- For an end-to-end simulation on two machines, quit the normal apps and start `BrightSync.exe --simulate` on Windows and `BrightSync.app/Contents/MacOS/BrightSync --simulate 39` on the Mac. The Windows app uses a mock monitor starting at 50%. Existing pairing works in simulation. A new pairing on the Windows simulation lasts until it exits. Re-pair in normal mode if you change the pairing during simulation. The mock should approach 39%. Try another percentage by restarting the Mac simulation.
+- For a local display check, run `BrightSync.app/Contents/MacOS/BrightSync --read-brightness` with the lid open. Change the Mac brightness in Control Center and compare the percentage. On real hardware, also check brightness in the MSI on-screen menu, monitor power cycling, Mac sleep/wake, and both login options.
 
 The macOS ZIP is ad hoc signed by default and is not notarized. Gatekeeper may block downloaded copies, and macOS may not reliably retain Local Network permission across ad hoc builds. For distribution, set `MACOS_SIGN_IDENTITY` to your Developer ID Application identity, sign with the hardened runtime, and [notarize and staple the app](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution). See [Apple's notes on Local Network identity](https://developer.apple.com/documentation/technotes/tn3179-understanding-local-network-privacy). The Windows EXE is unsigned and may trigger SmartScreen.
 

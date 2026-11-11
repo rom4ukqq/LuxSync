@@ -4,8 +4,6 @@
 #include <cmath>
 #include <cstdint>
 #include <optional>
-#include <utility>
-#include <vector>
 
 namespace bs {
 using Key = std::array<uint8_t, 32>;
@@ -20,14 +18,14 @@ enum class Kind : uint8_t { hello = 1, challenge, sample, ack };
 struct Packet {
     Kind kind;
     Nonce sender, receiver{};
-    uint32_t millilux = 0;
+    uint32_t hundredths = 0;
 };
 
 inline Bytes serialize(const Packet& p) {
-    Bytes b{'B', 'S', 'Y', 'N', 1, static_cast<uint8_t>(p.kind)};
+    Bytes b{'B', 'S', 'Y', 'N', 2, static_cast<uint8_t>(p.kind)};
     std::copy(p.sender.begin(), p.sender.end(), b.begin() + 8);
     std::copy(p.receiver.begin(), p.receiver.end(), b.begin() + 24);
-    for (int i = 0; i < 4; ++i) b[40 + i] = static_cast<uint8_t>(p.millilux >> (24 - i * 8));
+    for (int i = 0; i < 4; ++i) b[40 + i] = static_cast<uint8_t>(p.hundredths >> (24 - i * 8));
     return b;
 }
 
@@ -35,7 +33,7 @@ inline Bytes serialize(const Packet& p) {
 template <typename Sign>
 std::optional<Packet> decode(const Bytes& b, size_t length, Sign sign) {
     if (length != b.size() || b[0] != 'B' || b[1] != 'S' || b[2] != 'Y' || b[3] != 'N' ||
-        b[4] != 1 || b[5] < 1 || b[5] > 4 || b[6] || b[7]) return {};
+        b[4] != 2 || b[5] < 1 || b[5] > 4 || b[6] || b[7]) return {};
     Key tag{};
     if (!sign(b.data(), tag)) return {};
     unsigned diff = 0;
@@ -44,9 +42,9 @@ std::optional<Packet> decode(const Bytes& b, size_t length, Sign sign) {
     Packet p{static_cast<Kind>(b[5]), {}};
     std::copy_n(b.begin() + 8, 16, p.sender.begin());
     std::copy_n(b.begin() + 24, 16, p.receiver.begin());
-    for (int i = 40; i < 44; ++i) p.millilux = (p.millilux << 8) | b[i];
+    for (int i = 40; i < 44; ++i) p.hundredths = (p.hundredths << 8) | b[i];
     if (p.sender == Nonce{} || (p.receiver == Nonce{}) != (p.kind == Kind::hello) ||
-        (p.kind == Kind::sample ? p.millilux > 250000000 : p.millilux != 0)) return {};
+        (p.kind == Kind::sample ? p.hundredths > 10000 : p.hundredths != 0)) return {};
     return p;
 }
 
@@ -74,24 +72,10 @@ public:
     bool connected(uint64_t now) const { return lastSample && now - *lastSample < connectionTimeout; }
 };
 
-using Curve = std::vector<std::pair<double, double>>;
 struct Tuning {
-    double minimum = 10, maximum = 100, offset = 0, alpha = 0.25, hysteresis = 3;
+    double minimum = 10, maximum = 100, offset = 0, alpha = 1, hysteresis = 1;
     uint64_t interval = 300;
-    Curve curve{{0,10}, {10,15}, {50,25}, {150,40}, {300,55}, {600,75}, {1000,100}};
 };
-
-inline double interpolate(const Curve& curve, double lux) {
-    if (lux <= curve.front().first) return curve.front().second;
-    for (size_t i = 1; i < curve.size(); ++i) {
-        auto [right, high] = curve[i];
-        if (lux <= right) {
-            auto [left, low] = curve[i - 1];
-            return low + (high - low) * (lux - left) / (right - left);
-        }
-    }
-    return curve.back().second;
-}
 
 // Reprobe after losing the handle, and keep looking for a missing selected
 // display at a lower cadence. A topology event interrupts either delay.
@@ -125,8 +109,8 @@ class Brightness {
     bool moving = false;
 public:
     explicit Brightness(const Tuning& config) : cfg(config) {}
-    void sample(double lux) {
-        filtered = hasSample ? filtered + cfg.alpha * (lux - filtered) : lux;
+    void sample(double percent) {
+        filtered = hasSample ? filtered + cfg.alpha * (percent - filtered) : percent;
         hasSample = true;
     }
     void reset() { hasSample = false; moving = false; }
@@ -134,7 +118,7 @@ public:
 
     std::optional<uint32_t> next(const BrightnessRange& range, std::optional<int> fallback = {}) {
         if ((!hasSample && !fallback) || !range.span()) return {};
-        const double desired = fallback ? *fallback : interpolate(cfg.curve, filtered) + cfg.offset;
+        const double desired = fallback ? *fallback : filtered + cfg.offset;
         const auto target = range.level(std::clamp(desired, cfg.minimum, cfg.maximum));
         const int64_t delta = static_cast<int64_t>(target) - range.current;
         const bool outside = range.current < range.level(cfg.minimum) || range.current > range.level(cfg.maximum);

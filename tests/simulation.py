@@ -18,7 +18,7 @@ ENV = {**os.environ, "BRIGHTSYNC_TEST_KEY": KEY.hex()}
 FORMAT = "!4sBBH16s16sI"
 
 
-def packet(kind, sender, receiver=ZERO, value=0, key=KEY, version=1):
+def packet(kind, sender, receiver=ZERO, value=0, key=KEY, version=2):
     body = struct.pack(FORMAT, b"BSYN", version, kind, 0, sender, receiver, value)
     return body + hmac.digest(key, body, hashlib.sha256)
 
@@ -27,9 +27,9 @@ def decode(data, kind):
     assert len(data) == 76
     body = data[:-32]
     assert hmac.compare_digest(hmac.digest(KEY, body, hashlib.sha256), data[-32:])
-    magic, version, actual, reserved, sender, receiver, lux = struct.unpack(FORMAT, body)
-    assert (magic, version, actual, reserved) == (b"BSYN", 1, kind, 0)
-    return sender, receiver, lux
+    magic, version, actual, reserved, sender, receiver, brightness = struct.unpack(FORMAT, body)
+    assert (magic, version, actual, reserved) == (b"BSYN", 2, kind, 0)
+    return sender, receiver, brightness
 
 
 def silent(sock):
@@ -46,7 +46,7 @@ def silent(sock):
 
 def mac(exe):
     env = ENV
-    for value, milli in [("145.125", 145125), ("0", 0)]:
+    for value, hundredths in [("52.375", 5238), ("0", 0), ("100", 10000)]:
         # Rebind as a fresh receiver; the second exchange uses different nonces.
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
             sock.bind(HOST)
@@ -54,21 +54,24 @@ def mac(exe):
             probe = subprocess.Popen([exe, "--probe", HOST[0], value], env=env)
             try:
                 data, endpoint = sock.recvfrom(256)
-                sender, old_receiver, lux = decode(data, 1)
-                if milli == 0:  # drop the first hello; the same process retries
+                sender, old_receiver, brightness = decode(data, 1)
+                if hundredths == 0:  # drop the first hello; the same process retries
+                    stale_endpoint = endpoint
                     data, endpoint = sock.recvfrom(256)
-                    new_sender, old_receiver, lux = decode(data, 1)
-                    assert sender != new_sender
+                    new_sender, old_receiver, brightness = decode(data, 1)
+                    assert sender != new_sender and endpoint != stale_endpoint
+                    sock.sendto(packet(2, sender, secrets.token_bytes(16)), stale_endpoint)
                     sender = new_sender
-                assert old_receiver == ZERO and lux == 0
+                assert old_receiver == ZERO and brightness == 0
                 challenge = secrets.token_bytes(16)
                 sock.sendto(packet(2, sender, challenge, key=ZERO), endpoint)
+                sock.sendto(packet(2, sender, challenge, version=1), endpoint)
                 sock.sendto(packet(2, sender, challenge) + b"x", endpoint)
                 sock.sendto(packet(2, ZERO, challenge), endpoint)
                 silent(sock)
                 sock.sendto(packet(2, sender, challenge), endpoint)
                 data, _ = sock.recvfrom(256)
-                assert decode(data, 3) == (sender, challenge, milli)
+                assert decode(data, 3) == (sender, challenge, hundredths)
                 sock.sendto(packet(4, sender, challenge, key=ZERO), endpoint)
                 sock.sendto(packet(4, sender, secrets.token_bytes(16)), endpoint)
                 time.sleep(0.15)
@@ -79,7 +82,7 @@ def mac(exe):
                 if probe.poll() is None:
                     probe.kill()
                     probe.wait(timeout=3)
-    for invalid in ("-1", "nan", "inf", "250000.1", "1,000", "oops"):
+    for invalid in ("-1", "nan", "inf", "100.1", "1,000", "oops"):
         assert subprocess.run([exe, "--probe", HOST[0], invalid], env=env, timeout=5).returncode == 2
 
 
@@ -107,12 +110,12 @@ def windows(exe):
                             continue
                     else:
                         raise AssertionError("No authenticated challenge from receiver")
-                    sender, server, lux = decode(challenge, 2)
-                    assert sender == client and server != ZERO and lux == 0
+                    sender, server, brightness = decode(challenge, 2)
+                    assert sender == client and server != ZERO and brightness == 0
                     if malformed:
                         sock.sendto(packet(3, client, server, value, key=ZERO), HOST)
-                        sock.sendto(packet(3, client, server, 250000001), HOST)
-                        sock.sendto(packet(3, client, server, value, version=2), HOST)
+                        sock.sendto(packet(3, client, server, 10001), HOST)
+                        sock.sendto(packet(3, client, server, value, version=1), HOST)
                         sock.sendto(packet(3, client, server, value) + b"x", HOST)
                         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as other:
                             other.sendto(packet(3, client, server, value), HOST)
@@ -139,18 +142,18 @@ def windows(exe):
                     time.sleep(0.1)
                 raise AssertionError(description)
 
-            poll(145125, malformed=True)
-            poll(145125)  # new endpoint
+            poll(3900, malformed=True)
+            poll(3900)  # new endpoint
             wait_for_levels(lambda levels: levels[-1:] == [39], 6, "The live ramp did not reach its target")
             wait_for_levels(lambda levels: levels[-2:] == [39, 40], 16, "The fallback did not apply after disconnect")
-            poll(600000)
+            poll(6000)
             wait_for_levels(lambda levels: levels[11:13] == [40, 41], 5,
                             "The live ramp did not resume after reconnect")
         finally:
             app.terminate()
             app.wait(timeout=5)
         lines = trace.read_text().splitlines()
-        assert [x for x in lines if x.startswith("sample ")] == ["sample 145125", "sample 145125", "sample 600000"]
+        assert [x for x in lines if x.startswith("sample ")] == ["sample 3900", "sample 3900", "sample 6000"]
         levels = [int(x.split()[1]) for x in lines if x.startswith("brightness ")]
         assert levels[:13] == list(range(49, 38, -1)) + [40, 41]
 

@@ -2,6 +2,7 @@
 #include "core.hpp"
 #include "../../protocol/pake.h"
 #include <memory>
+#include <vector>
 
 namespace bs {
 using Pin = std::array<uint8_t, 8>;

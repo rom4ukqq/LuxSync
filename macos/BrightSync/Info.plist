@@ -6,9 +6,9 @@
 <key>CFBundleName</key><string>BrightSync</string>
 <key>CFBundleIconFile</key><string>BrightSync</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>1.3.0</string>
-<key>CFBundleVersion</key><string>4</string>
+<key>CFBundleShortVersionString</key><string>1.4.0</string>
+<key>CFBundleVersion</key><string>5</string>
 <key>LSMinimumSystemVersion</key><string>13.0</string>
 <key>LSUIElement</key><true/>
-<key>NSLocalNetworkUsageDescription</key><string>BrightSync sends ambient light readings to your paired Windows PC.</string>
+<key>NSLocalNetworkUsageDescription</key><string>BrightSync sends your built-in display brightness to your paired Windows PC.</string>
 </dict></plist>

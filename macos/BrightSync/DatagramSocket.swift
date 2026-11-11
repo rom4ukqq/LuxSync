@@ -45,12 +45,13 @@ final class DatagramSocket {
 
     deinit { source.cancel() }
 
-    func send(_ data: Data, to target: sockaddr_in? = nil) {
+    @discardableResult
+    func send(_ data: Data, to target: sockaddr_in? = nil) -> Bool {
         var address = target ?? destination
-        data.withUnsafeBytes { bytes in
+        return data.withUnsafeBytes { bytes in
             withUnsafePointer(to: &address) {
                 $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                    _ = sendto(fd, bytes.baseAddress, bytes.count, 0, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+                    sendto(fd, bytes.baseAddress, bytes.count, 0, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) == bytes.count
                 }
             }
         }

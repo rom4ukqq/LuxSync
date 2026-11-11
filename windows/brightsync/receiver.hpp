@@ -18,7 +18,7 @@ struct Control {
 struct Status {
     bool paired = false;
     bool connected = false;
-    std::optional<double> lux;
+    std::optional<double> macPercent;
     bool listening = false;
     std::vector<DisplayInfo> monitors;
     std::wstring active;
@@ -119,7 +119,10 @@ class Receiver {
                                             static_cast<int>(bytes.size()), 0,
                                             reinterpret_cast<sockaddr*>(&from), &size);
                     if (n == SOCKET_ERROR) {
-                        if (WSAGetLastError() == WSAEMSGSIZE) continue;
+                        const auto error = WSAGetLastError();
+                        // A previous UDP peer can disappear during sleep. Winsock
+                        // reports its ICMP error separately from any queued samples.
+                        if (error == WSAEMSGSIZE || error == WSAECONNRESET) continue;
                         break;
                     }
                     if (size != sizeof(from) || from.sin_family != AF_INET) continue;
@@ -154,9 +157,9 @@ class Receiver {
                     if (!reply) continue;
                     if (reply->kind == Kind::ack) {
                         if (!hadConnection) brightness.reset();
-                        reading = packet->millilux / 1000.0;
+                        reading = packet->hundredths / 100.0;
                         if (settings.enabled) brightness.sample(*reading);
-                        if (trace) { std::fprintf(trace, "sample %u\n", static_cast<unsigned>(packet->millilux)); std::fflush(trace); }
+                        if (trace) { std::fprintf(trace, "sample %u\n", static_cast<unsigned>(packet->hundredths)); std::fflush(trace); }
                     }
                     auto output = serialize(*reply);
                     Key tag{};
@@ -180,7 +183,7 @@ class Receiver {
 
             now = GetTickCount64();
             next.connected = session.connected(now);
-            next.lux = next.connected ? reading : std::nullopt;
+            next.macPercent = next.connected ? reading : std::nullopt;
             const bool live = next.connected && settings.enabled;
             if (!live && wasActive) brightness.reset();
             wasActive = live;

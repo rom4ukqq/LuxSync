@@ -11,7 +11,6 @@
 #include <string>
 #include <iterator>
 #include <cwchar>
-#include <sstream>
 #include "core.hpp"
 
 namespace bs {
@@ -139,20 +138,6 @@ inline Tuning readTuning(const std::wstring& path) {
         rampInterval = std::clamp(interval / step, 250.0, 2000.0);
     }
     t.interval = static_cast<uint64_t>(read(L"ramp_interval_ms", rampInterval, 250, 2000));
-    auto text = readSetting(path, L"brightness", L"curve", L"");
-    Curve custom;
-    bool valid = true;
-    std::wstringstream items(text);
-    std::wstring point;
-    while (std::getline(items, point, L',')) {
-        auto colon = point.find(L':');
-        if (colon == std::wstring::npos || custom.size() == 32) { valid = false; break; }
-        auto lux = number(point.substr(0, colon), -1, 0, 250000);
-        auto percent = number(point.substr(colon + 1), -1, 0, 100);
-        if (lux < 0 || percent < 0 || (!custom.empty() && lux <= custom.back().first)) { valid = false; break; }
-        custom.emplace_back(lux, percent);
-    }
-    if (valid && custom.size() >= 2) t.curve = std::move(custom);
     return t;
 }
 }

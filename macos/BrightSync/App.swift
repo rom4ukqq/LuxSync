@@ -1,18 +1,22 @@
 import AppKit
+import Network
 import ServiceManagement
 
 final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenuItemValidation {
     private let defaults = UserDefaults.standard
-    private let sensor: LightSensor
+    private let screen: ScreenBrightnessSource
+    private let network = NWPathMonitor()
     private var key: Data?
     private var sender: Sender?
     private var pairingClient: PairingClient?
     private var pairItem: NSMenuItem!
     private var timer: Timer?
-    private var lux: Double?
-    private var awake = true
+    private var brightness: Double?
+    private var sleepingSince: ContinuousClock.Instant?
+    private var lastPoll: ContinuousClock.Instant?
+    private var awake: Bool { sleepingSince == nil }
     private var item: NSStatusItem!
-    private let ambient = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+    private let screenLevel = NSMenuItem(title: "", action: nil, keyEquivalent: "")
     private let peer = NSMenuItem(title: "", action: nil, keyEquivalent: "")
     private var sync: NSMenuItem!
     private var login: NSMenuItem!
@@ -21,25 +25,25 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenuItemVali
     private var menuOpen = false
     private let simulated: Bool
 
-    init(sensor: LightSensor, simulated: Bool) { self.sensor = sensor; self.simulated = simulated }
+    init(screen: ScreenBrightnessSource, simulated: Bool) { self.screen = screen; self.simulated = simulated }
     private var enabled: Bool { defaults.object(forKey: "enabled") as? Bool ?? true }
     private var host: String { defaults.string(forKey: "receiverIP") ?? "" }
     private var interval: Double {
-        let value = defaults.object(forKey: "pollSeconds") as? Double ?? 3
-        return value.isFinite ? min(8, max(1, value)) : 3
+        let value = defaults.object(forKey: "pollSeconds") as? Double ?? 1
+        return value.isFinite ? min(8, max(1, value)) : 1
     }
 
     func applicationDidFinishLaunching(_ note: Notification) {
         item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         item.button?.toolTip = "BrightSync"
-        item.button?.setAccessibilityLabel("BrightSync Mac Sensor")
-        ambient.image = MenuIcon.ambient.image
+        item.button?.setAccessibilityLabel("BrightSync Mac Display")
+        screenLevel.image = MenuIcon.screenLevel.image
         peer.image = MenuIcon.receiver.image
         let menu = NSMenu()
         menu.delegate = self
-        menu.addItem(NSMenuItem(title: "BrightSync · Mac Sensor", action: nil, keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "BrightSync · Mac Display", action: nil, keyEquivalent: ""))
         menu.addItem(.separator())
-        menu.addItem(ambient)
+        menu.addItem(screenLevel)
         menu.addItem(peer)
         menu.addItem(.separator())
         sync = add("Sync Enabled", #selector(toggle), to: menu)
@@ -65,7 +69,14 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenuItemVali
         let center = NSWorkspace.shared.notificationCenter
         center.addObserver(self, selector: #selector(sleep(_:)), name: NSWorkspace.willSleepNotification, object: nil)
         center.addObserver(self, selector: #selector(wake(_:)), name: NSWorkspace.didWakeNotification, object: nil)
+        center.addObserver(self, selector: #selector(wake(_:)), name: NSWorkspace.screensDidWakeNotification, object: nil)
         key = Pairing.load()
+        network.pathUpdateHandler = { [weak self] _ in
+            guard let self, self.awake, self.enabled else { return }
+            self.sender?.resetConnection()
+            self.tick()
+        }
+        network.start(queue: .main)
         restart()
     }
 
@@ -95,10 +106,11 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenuItemVali
     @objc private func updateToken() { _ = updates.configure(); refresh() }
 
     private func refresh() {
-        ambient.title = lux.map { String(format: "Ambient: %.1f lux%@", $0, simulated ? " (simulated)" : "") }
-            ?? (enabled ? "Ambient: Unavailable" : "Ambient: Paused")
-        let connected = sender?.lastAck.map { ProcessInfo.processInfo.systemUptime - $0 < max(10, interval * 3) } ?? false
-        let status = pairingClient != nil ? "Pairing…" : !enabled ? "Paused" : key == nil ? "Not paired" : sender == nil ? "Network unavailable" :
+        screenLevel.title = brightness.map {
+            String(format: "Mac display: %.1f%%%@", $0, simulated ? " (simulated)" : "")
+        } ?? (enabled && awake ? "Mac display: Unavailable" : "Mac display: Paused")
+        let connected = sender?.lastAck.map { ProcessInfo.processInfo.systemUptime - $0 < max(4, interval * 2) } ?? false
+        let status = pairingClient != nil ? "Pairing…" : !enabled || !awake ? "Paused" : key == nil ? "Not paired" :
             connected ? "Connected" : "Waiting for receiver"
         peer.title = "Windows PC: " + status
         item.button?.image = (connected && enabled ? MenuIcon.connected : MenuIcon.sensor).image
@@ -109,9 +121,12 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenuItemVali
     }
 
     private func restart() {
-        timer?.invalidate(); timer = nil
-        sender = nil; lux = nil
-        guard awake, enabled else { refresh(); return }
+        timer?.invalidate()
+        timer = nil
+        sender = nil
+        brightness = nil
+        lastPoll = nil
+        guard enabled else { refresh(); return }
         tick()
         let repeating = Timer(timeInterval: interval, repeats: true) { [weak self] _ in self?.tick() }
         repeating.tolerance = 0.2
@@ -120,25 +135,49 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenuItemVali
     }
 
     private func tick() {
+        guard enabled else { return }
+        let now = ContinuousClock.now
+        let pauseThreshold = Duration.seconds(interval + 2)
+        if let sleepingSince {
+            // The clock includes system sleep. A timer that resumes can recover
+            // even if the workspace wake notification never reached the app.
+            guard sleepingSince.duration(to: now) >= pauseThreshold else { return }
+            self.sleepingSince = nil
+        }
+        if let lastPoll, lastPoll.duration(to: now) >= pauseThreshold {
+            sender?.resetConnection()
+        }
+        lastPoll = now
         if sender == nil, let key {
-            sender = Sender(key: key, host: host)
+            sender = Sender(key: key, host: host, retryAfter: max(4, interval * 2))
             sender?.onAck = { [weak self] in self?.refresh() }
         }
-        lux = sensor.read()
-        if let lux { sender?.poll(lux) }
+        brightness = screen.readPercent()
+        if let brightness { sender?.poll(brightness) }
         refresh()
     }
 
     @objc private func sleep(_ note: Notification) {
         pairingClient?.cancel()
         pairingClient = nil
-        awake = false
-        restart()
+        sleepingSince = .now
+        sender?.resetConnection()
+        brightness = nil
+        refresh()
     }
-    @objc private func wake(_ note: Notification) { awake = true; restart() }
+
+    @objc private func wake(_ note: Notification) {
+        sleepingSince = nil
+        sender?.resetConnection()
+        tick()
+    }
+
     @objc private func toggle() { defaults.set(!enabled, forKey: "enabled"); restart() }
     @objc private func quit() { NSApp.terminate(nil) }
-    func applicationWillTerminate(_ notification: Notification) { updates.cancel() }
+    func applicationWillTerminate(_ notification: Notification) {
+        network.cancel()
+        updates.cancel()
+    }
 
     @objc private func toggleLogin() {
         let service = SMAppService.mainApp

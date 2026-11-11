@@ -5,19 +5,13 @@
 int main() {
     using namespace bs;
     Tuning config;
-    assert(interpolate(config.curve, 0) == 10);
-    assert(interpolate(config.curve, 30) == 20);
-    assert(interpolate(config.curve, 150) == 40);
-    assert(interpolate(config.curve, 450) == 65);
-    assert(interpolate(config.curve, 5000) == 100);
-
     auto level = [](uint32_t current) { return BrightnessRange{0, 100, current}; };
     Brightness output(config);
     assert(!output.next(level(50)));
-    output.sample(50);
-    assert(!output.next(level(23))); // within hysteresis
-    assert(output.next(level(22)) == 23u);
-    output.sample(450); // EMA = 150 lux, target 40%
+    output.sample(40.25);
+    assert(!output.next(level(40))); // same native monitor level
+    assert(output.next(level(39)) == 40u);
+    output.sample(40); // the panel percentage is the target
     auto ramp = level(25);
     for (uint64_t tick = 0; ramp.current < 40; tick += 300) {
         assert(output.delay(tick) == 0);
@@ -31,8 +25,17 @@ int main() {
     output.reset();
     assert(!output.next(level(40)));
     assert(output.next(level(40), 39) == 39u); // fallback reaches even a nearby target
-    output.sample(150);
-    assert(!output.next(level(39))); // return to live hysteresis
+    output.sample(40);
+    assert(output.next(level(39)) == 40u); // resume the panel target after fallback
+
+    Tuning smoothed;
+    smoothed.alpha = 0.25;
+    smoothed.hysteresis = 3;
+    Brightness filtered(smoothed);
+    filtered.sample(20);
+    filtered.sample(100); // optional EMA now produces 40%
+    assert(!filtered.next(level(39)));
+    assert(filtered.next(level(37)) == 38u);
 
     const BrightnessRange coarse{20, 40, 31};
     assert(output.next(coarse, 65) == 32u); // use one actual monitor level
@@ -44,8 +47,8 @@ int main() {
     capped.maximum = 70;
     capped.offset = 20;
     Brightness limited(capped);
-    limited.sample(1000);
-    assert(!limited.next(level(69)));
+    limited.sample(100);
+    assert(!limited.next(level(70)));
     assert(limited.next(level(72)) == 71u);
     assert(!limited.next(level(70), 99)); // fallback respects the configured bounds
     assert(limited.next(level(16), 0) == 15u);
@@ -59,7 +62,7 @@ int main() {
     assert(recovery.ready(0));
     recovery.scanned(0, false);
     assert(!recovery.ready(100));
-    output.sample(1000);
+    output.sample(100);
     assert(output.next(level(50)) == 51u);
     output.attempted(6000, false);
     recovery.failed(6000);
@@ -74,7 +77,7 @@ int main() {
 
     Nonce client{1}, server{2}, nextClient{3}, nextServer{4};
     Packet hello{Kind::hello, client};
-    Packet sample{Kind::sample, client, server, 145125};
+    Packet sample{Kind::sample, client, server, 3925};
     Session session;
     assert(!session.exchange(sample, 3, 0, {}));
     auto challenge = session.exchange(hello, 3, 1, server);

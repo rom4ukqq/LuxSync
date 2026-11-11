@@ -92,12 +92,17 @@ def windows(exe):
                 with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
                     sock.settimeout(0.3)
                     client = secrets.token_bytes(16)
-                    for _ in range(25):
+                    for _ in range(50):
                         assert app.poll() is None
                         sock.sendto(packet(1, client), HOST)
                         try:
                             challenge, _ = sock.recvfrom(256)
                             break
+                        except ConnectionResetError as error:
+                            # Winsock reports ICMP port-unreachable if the GUI process is still binding.
+                            if getattr(error, "winerror", None) != 10054:
+                                raise
+                            time.sleep(0.1)
                         except TimeoutError:
                             continue
                     else:

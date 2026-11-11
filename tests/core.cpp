@@ -16,7 +16,7 @@ int main() {
     assert(!output.next(level(50)));
     output.sample(50);
     assert(!output.next(level(23))); // within hysteresis
-    assert(output.next(level(22)) == 23);
+    assert(output.next(level(22)) == 23u);
     output.sample(450); // EMA = 150 lux, target 40%
     auto ramp = level(25);
     for (uint64_t tick = 0; ramp.current < 40; tick += 300) {
@@ -30,14 +30,14 @@ int main() {
     assert(!output.next(ramp));
     output.reset();
     assert(!output.next(level(40)));
-    assert(output.next(level(40), 39) == 39); // fallback reaches even a nearby target
+    assert(output.next(level(40), 39) == 39u); // fallback reaches even a nearby target
     output.sample(150);
     assert(!output.next(level(39))); // return to live hysteresis
 
     const BrightnessRange coarse{20, 40, 31};
-    assert(output.next(coarse, 65) == 32); // use one actual monitor level
+    assert(output.next(coarse, 65) == 32u); // use one actual monitor level
     const BrightnessRange fine{0, 255, 150};
-    assert(output.next(fine, 90) == 152); // no more than one percentage point
+    assert(output.next(fine, 90) == 152u); // no more than one percentage point
 
     Tuning capped;
     capped.minimum = 15;
@@ -46,21 +46,21 @@ int main() {
     Brightness limited(capped);
     limited.sample(1000);
     assert(!limited.next(level(69)));
-    assert(limited.next(level(72)) == 71);
+    assert(limited.next(level(72)) == 71u);
     assert(!limited.next(level(70), 99)); // fallback respects the configured bounds
-    assert(limited.next(level(16), 0) == 15);
+    assert(limited.next(level(16), 0) == 15u);
     capped.offset = -40;
     limited.reset();
     limited.sample(0);
     assert(!limited.next(level(15)));
-    assert(limited.next(level(10)) == 11);
+    assert(limited.next(level(10)) == 11u);
 
     MonitorRetry recovery;
     assert(recovery.ready(0));
     recovery.scanned(0, false);
     assert(!recovery.ready(100));
     output.sample(1000);
-    assert(output.next(level(50)) == 51);
+    assert(output.next(level(50)) == 51u);
     output.attempted(6000, false);
     recovery.failed(6000);
     assert(output.delay(6299) == 1);
@@ -70,7 +70,7 @@ int main() {
     recovery.changed();
     assert(recovery.ready(9500));
     recovery.scanned(9500, false);
-    assert(output.next(level(44)) == 45);
+    assert(output.next(level(44)) == 45u);
 
     Nonce client{1}, server{2}, nextClient{3}, nextServer{4};
     Packet hello{Kind::hello, client};

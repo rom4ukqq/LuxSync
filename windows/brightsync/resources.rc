@@ -1,0 +1,50 @@
+#include <windows.h>
+
+101 ICON "assets/BrightSync.ico"
+
+102 DIALOGEX 0, 0, 226, 104
+STYLE DS_SETFONT | DS_MODALFRAME | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Pair with your Mac"
+FONT 9, "Segoe UI"
+BEGIN
+    CTEXT "In BrightSync on your Mac, choose Pair with Windows.", -1, 12, 13, 202, 16
+    CTEXT "", 103, 12, 34, 202, 24, SS_CENTERIMAGE
+    CTEXT "This code expires in 3 minutes.", -1, 12, 64, 202, 12
+    DEFPUSHBUTTON "Done", IDOK, 85, 82, 56, 15
+END
+
+104 DIALOGEX 0, 0, 230, 109
+STYLE DS_SETFONT | DS_MODALFRAME | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Fallback brightness"
+FONT 9, "Segoe UI"
+BEGIN
+    LTEXT "Use this brightness when the Mac stops sending readings.", -1, 12, 13, 206, 20
+    LTEXT "Brightness", -1, 12, 48, 48, 12
+    EDITTEXT 105, 62, 45, 38, 15, ES_NUMBER | ES_AUTOHSCROLL | WS_TABSTOP
+    LTEXT "% (0 to 100)", -1, 105, 48, 85, 12
+    DEFPUSHBUTTON "Save", IDOK, 105, 82, 52, 15
+    PUSHBUTTON "Cancel", IDCANCEL, 162, 82, 56, 15
+END
+
+1 VERSIONINFO
+FILEVERSION 1,2,0,0
+PRODUCTVERSION 1,2,0,0
+FILEFLAGSMASK VS_FFI_FILEFLAGSMASK
+FILEOS VOS_NT_WINDOWS32
+FILETYPE VFT_APP
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904b0"
+        BEGIN
+            VALUE "FileDescription", "BrightSync Windows Receiver"
+            VALUE "FileVersion", "1.2.0"
+            VALUE "ProductName", "BrightSync"
+            VALUE "ProductVersion", "1.2.0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x0409, 1200
+    END
+END

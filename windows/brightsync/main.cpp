@@ -1,13 +1,15 @@
 #include "receiver.hpp"
+#include "updates.hpp"
 #include <shellapi.h>
 #include <dbt.h>
 #include <wtsapi32.h>
 #include <memory>
+#include <ctime>
 
 namespace {
 using namespace bs;
 constexpr UINT trayMessage = WM_APP + 1;
-enum : UINT { toggle = 1, startup, pair, forget, rescan, quit, fallback, firstDisplay = 100 };
+enum : UINT { toggle = 1, startup, pair, forget, rescan, quit, fallback, autoUpdate, updateNow, updateToken, firstDisplay = 100 };
 UINT taskbarCreated;
 constexpr GUID consoleDisplayState{0x6fe69556, 0x704a, 0x47a0, {0x8f,0x24,0xc2,0x8d,0x93,0x6f,0xda,0x47}};
 
@@ -109,6 +111,8 @@ struct App {
     const bool simulate;
     const std::wstring path;
     Control control;
+    Updates updates;
+    bool menuOpen = false;
     std::unique_ptr<Receiver> receiver;
     HPOWERNOTIFY displayPower = nullptr;
     bool trayAdded = false;
@@ -119,6 +123,10 @@ struct App {
         control.enabled = readSetting(path, L"general", L"enabled", L"1") != L"0";
         control.fallbackPercent = static_cast<int>(std::lround(number(
             readSetting(path, L"brightness", L"fallback_percent", L""), defaultFallbackBrightness, 0, 100)));
+        updates.automatic = readSetting(path, L"updates", L"automatic", L"0") == L"1";
+        const auto lastCheck = std::wcstoull(readSetting(path, L"updates", L"last_check", L"0").c_str(), nullptr, 10);
+        const auto now = static_cast<uint64_t>(std::time(nullptr));
+        if (lastCheck <= now) updates.restoreLastCheck(now - lastCheck);
         control.monitor = simulate ? L"mock" : readSetting(path, L"general", L"monitor", L"");
     }
 
@@ -172,6 +180,93 @@ struct App {
         publish();
     }
 
+    bool configureUpdates(HWND hwnd) {
+        UpdateTokenDialog setting;
+        const auto result = DialogBoxParamW(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(106), hwnd,
+                                           updateTokenDialog, reinterpret_cast<LPARAM>(&setting));
+        if (result == -1) error(hwnd, L"Could not open the update token dialog.");
+        if (result == removeToken) {
+            if (!removeUpdateToken()) error(hwnd, L"Could not remove the token.");
+            else {
+                updates.automatic = false;
+                armUpdateTimer(hwnd);
+                if (!save(L"automatic", L"0", L"updates")) error(hwnd, L"Could not save update settings.");
+            }
+        }
+        if (result != IDOK) return false;
+        const bool saved = storeUpdateToken(setting.token);
+        SecureZeroMemory(setting.token.data(), setting.token.size());
+        if (!saved) { error(hwnd, L"Could not save the token in Windows Credential Manager."); return false; }
+        updates.checkSoon();
+        return true;
+    }
+
+    std::string updateAccess(HWND hwnd) {
+        auto token = loadUpdateToken();
+        if (token.empty() && configureUpdates(hwnd)) token = loadUpdateToken();
+        return token;
+    }
+
+    void toggleUpdates(HWND hwnd) {
+        const bool enable = !updates.automatic;
+        if (enable) {
+            auto token = updateAccess(hwnd);
+            if (token.empty()) return;
+            SecureZeroMemory(token.data(), token.size());
+        }
+        if (!save(L"automatic", enable ? L"1" : L"0", L"updates")) {
+            error(hwnd, L"Could not save update settings.");
+            return;
+        }
+        updates.automatic = enable;
+        if (enable) updates.checkSoon();
+        armUpdateTimer(hwnd);
+    }
+
+    void installUpdate(HWND hwnd) {
+        auto token = updateAccess(hwnd);
+        if (token.empty()) return;
+        const auto choice = MessageBoxW(hwnd, L"Check for updates and restart BrightSync if an update is available?",
+            L"Update BrightSync", MB_OKCANCEL | MB_ICONQUESTION | MB_SETFOREGROUND);
+        if (choice == IDOK && !startUpdate(hwnd, std::move(token), true))
+            error(hwnd, L"Could not start the updater. Extract both executables from the Windows ZIP.");
+        if (!token.empty()) SecureZeroMemory(token.data(), token.size());
+    }
+
+    void armUpdateTimer(HWND hwnd) {
+        if (updates.busy()) SetTimer(hwnd, 2, 1000, nullptr);
+        else if (updates.automatic) SetTimer(hwnd, 2, 15000, nullptr);
+        else KillTimer(hwnd, 2);
+    }
+
+    bool startUpdate(HWND hwnd, std::string token, bool manual) {
+        if (!updates.start(std::move(token), manual)) return false;
+        const auto now = std::to_wstring(std::time(nullptr));
+        save(L"last_check", now.c_str(), L"updates");
+        armUpdateTimer(hwnd);
+        return true;
+    }
+
+    void updateTick(HWND hwnd) {
+        if (const auto result = updates.poll()) {
+            armUpdateTimer(hwnd);
+            if (result->code == 10) {
+                if (menuOpen) EndMenu();
+                PostMessageW(hwnd, WM_CLOSE, 0, 0);
+                return;
+            }
+            if (result->manual) {
+                if (result->code == 0)
+                    MessageBoxW(hwnd, L"BrightSync is up to date.", L"BrightSync", MB_OK | MB_ICONINFORMATION | MB_SETFOREGROUND);
+                else if (result->code == 3)
+                    error(hwnd, L"GitHub denied access. Check the token's expiration and repository permissions.");
+                else
+                    error(hwnd, L"Update failed. See %LOCALAPPDATA%\\BrightSync\\update-error.log for details.");
+            }
+        }
+        if (updates.due() && !menuOpen) startUpdate(hwnd, loadUpdateToken(), false);
+    }
+
     void menu(HWND hwnd) {
         const auto state = receiver->snapshot();
         HMENU root = CreatePopupMenu();
@@ -215,9 +310,17 @@ struct App {
         }
         AppendMenuW(root, MF_STRING, rescan, L"Rescan Monitors");
         separator();
-        AppendMenuW(root, MF_STRING, pair, L"Show Pairing Code\x2026");
+        AppendMenuW(root, MF_STRING | (updates.busy() ? MF_GRAYED : MF_ENABLED), pair, L"Show Pairing Code\x2026");
         AppendMenuW(root, MF_STRING | (state.paired ? MF_ENABLED : MF_GRAYED), forget, L"Forget Pairing\x2026");
         separator();
+        if (!simulate) {
+            const auto available = updates.busy() ? MF_GRAYED : MF_ENABLED;
+            AppendMenuW(root, MF_STRING | available | (updates.automatic ? MF_CHECKED : MF_UNCHECKED),
+                        autoUpdate, L"Automatic Updates");
+            AppendMenuW(root, MF_STRING | available, updateNow, L"Update Now\x2026");
+            AppendMenuW(root, MF_STRING | available, updateToken, L"GitHub Update Token\x2026");
+            separator();
+        }
         AppendMenuW(root, MF_STRING, quit, L"Quit");
 
         POINT cursor{};
@@ -246,6 +349,9 @@ struct App {
             break;
         case rescan: requestScan(); break;
         case fallback: editFallback(hwnd); break;
+        case autoUpdate: toggleUpdates(hwnd); break;
+        case updateNow: installUpdate(hwnd); break;
+        case updateToken: configureUpdates(hwnd); break;
         case quit: DestroyWindow(hwnd); break;
         default:
             if (command >= firstDisplay && command - firstDisplay < state.monitors.size()) {
@@ -277,6 +383,7 @@ LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM w, LPARAM l) {
             if (!app->trayAdded && !app->simulate)
                 SetTimer(hwnd, 1, 2000, nullptr);
             if (!app->simulate) {
+                app->armUpdateTimer(hwnd);
                 app->displayPower = RegisterPowerSettingNotification(hwnd, &consoleDisplayState, DEVICE_NOTIFY_WINDOW_HANDLE);
                 WTSRegisterSessionNotification(hwnd, NOTIFY_FOR_THIS_SESSION);
             }
@@ -285,10 +392,14 @@ LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM w, LPARAM l) {
             if (w == 1) {
                 app->notify(hwnd, NIM_ADD);
                 if (app->trayAdded) KillTimer(hwnd, 1);
-            }
+            } else if (w == 2) app->updateTick(hwnd);
             return 0;
         case trayMessage:
-            if (l == WM_RBUTTONUP || l == WM_LBUTTONUP || l == WM_CONTEXTMENU) app->menu(hwnd);
+            if (!app->menuOpen && (l == WM_RBUTTONUP || l == WM_LBUTTONUP || l == WM_CONTEXTMENU)) {
+                app->menuOpen = true;
+                app->menu(hwnd);
+                app->menuOpen = false;
+            }
             return 0;
         case WM_DEVICECHANGE:
             if (w == DBT_DEVNODES_CHANGED) app->requestScan();
@@ -306,6 +417,7 @@ LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM w, LPARAM l) {
             }
             return TRUE;
         case WM_DESTROY:
+            app->updates.cancel();
             if (app->displayPower) UnregisterPowerSettingNotification(app->displayPower);
             if (!app->simulate) WTSUnRegisterSessionNotification(hwnd);
             app->notify(hwnd, NIM_DELETE);

@@ -34,6 +34,18 @@ if ($LASTEXITCODE -ne 0) { throw 'Could not compile the pairing adapter.' }
 $res = Join-Path $crypto 'resources.res'
 & rc.exe /nologo "/fo$res" windows/brightsync/resources.rc
 if ($LASTEXITCODE -ne 0) { throw 'Could not compile the Windows icons and dialog.' }
+$version = (Get-Content VERSION -Raw).Trim()
+$updater = Join-Path $output 'BrightSyncUpdater.exe'
+$previousCgo = $env:CGO_ENABLED
+try {
+    $env:CGO_ENABLED = '0'
+    & go build -trimpath -ldflags "-s -w -H=windowsgui -X main.currentVersion=$version" -o $updater ./updater
+    if ($LASTEXITCODE -ne 0) { throw 'Updater compilation failed.' }
+} finally {
+    $env:CGO_ENABLED = $previousCgo
+}
+$goLicense = Join-Path $output 'Go-LICENSE.txt'
+Copy-Item updater/Go-LICENSE.txt $goLicense -Force
 $exe = Join-Path $output 'BrightSync.exe'
 $obj = Join-Path $dist 'BrightSync.obj'
 & cl.exe /nologo /std:c++17 /EHsc /W4 /O1 /GL /Gy /Gw /MT /DUNICODE /D_UNICODE /D_WIN32_WINNT=0x0A00 `
@@ -42,7 +54,7 @@ $obj = Join-Path $dist 'BrightSync.obj'
 if ($LASTEXITCODE -ne 0) { throw 'BrightSync compilation failed.' }
 Copy-Item LICENSE (Join-Path $output 'LICENSE.txt') -Force
 Copy-Item (Join-Path $boring 'LICENSE') (Join-Path $output 'BoringSSL-LICENSE.txt') -Force
-Compress-Archive -Path $exe, (Join-Path $output 'LICENSE.txt'), (Join-Path $output 'BoringSSL-LICENSE.txt') -DestinationPath (Join-Path $dist 'BrightSync-Windows-x64.zip') -Force
+Compress-Archive -Path $exe, $updater, $goLicense, (Join-Path $output 'LICENSE.txt'), (Join-Path $output 'BoringSSL-LICENSE.txt') -DestinationPath (Join-Path $dist 'BrightSync-Windows-x64.zip') -Force
 
 if ($env:BRIGHTSYNC_RUN_TESTS -eq '1') {
     $test = Join-Path $dist 'core-tests.exe'

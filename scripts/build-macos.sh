@@ -3,7 +3,12 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 src=macos/BrightSync
 app=dist/macos/BrightSync.app
-mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources" "$app/Contents/Helpers"
+version=$(cat VERSION)
+helper="$app/Contents/Helpers/BrightSyncUpdater"
+GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build -trimpath \
+  -ldflags "-s -w -X main.currentVersion=$version" -o "$helper" ./updater
+cp updater/Go-LICENSE.txt "$app/Contents/Resources/Go-LICENSE.txt"
 cp "$src/Info.plist" "$app/Contents/Info.plist"
 cp LICENSE "$app/Contents/Resources/LICENSE.txt"
 scripts/build-crypto.sh mac-crypto -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=13.0
@@ -16,8 +21,10 @@ xcrun swiftc -target arm64-apple-macos13.0 -Osize -whole-module-optimization \
   dist/deps/mac-crypto/libcrypto.a -Xlinker -dead_strip -o "$app/Contents/MacOS/BrightSync"
 strip -x "$app/Contents/MacOS/BrightSync"
 if [[ -n "${MACOS_SIGN_IDENTITY:-}" && "$MACOS_SIGN_IDENTITY" != "-" ]]; then
+  codesign --force --options runtime --timestamp --sign "$MACOS_SIGN_IDENTITY" "$helper"
   codesign --force --options runtime --timestamp --sign "$MACOS_SIGN_IDENTITY" "$app"
 else
+  codesign --force --sign - "$helper"
   codesign --force --sign - "$app"
 fi
 rm -f dist/BrightSync-macOS-arm64.zip

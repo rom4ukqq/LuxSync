@@ -50,11 +50,21 @@ The Mac uses per-user preferences (`com.brightsync.sender`). To change the defau
 
 The code is used by BoringSSL’s SPAKE2 exchange to establish a separate 256-bit key. The key is stored in macOS Keychain and protected by Windows DPAPI for the current user. The [protocol](protocol/README.md) authenticates each reading and rejects replayed samples. Ambient readings are not encrypted on the LAN.
 
+## Automatic updates
+
+Install version 1.3.0 from the release ZIP once to get the updater. On Windows, keep `BrightSyncUpdater.exe` next to `BrightSync.exe`. Install the app in a folder your account can write to. BrightSync runs the updater with your account permissions.
+
+1. In GitHub, create a [fine-grained personal access token](https://github.com/settings/personal-access-tokens/new). Select only `rom4ukqq/LuxSync` and grant **Contents → Read-only**.
+2. Open **GitHub Update Token** in BrightSync and paste the token on each computer. It is stored in macOS Keychain or Windows Credential Manager.
+3. Enable **Automatic Updates**. BrightSync checks about every six hours while it runs. When a verified release is available, it installs the update and restarts the app. Use **Update Now** to check and install immediately, or leave automatic updates off and use the manual action.
+
+The updater verifies the release manifest with the Ed25519 public key built into BrightSync. The manifest identifies the release version and contains the size and SHA-256 digest of each platform ZIP. The app and its updater are replaced together. Pairing and brightness settings live separately. If installation fails during replacement, the updater restores the previous files and tries to reopen the app. It records errors in `~/Library/Caches/BrightSync/update-error.log` on macOS or `%LOCALAPPDATA%\BrightSync\update-error.log` on Windows.
+
 ## Build and test
 
-- **macOS 13 or newer, Apple Silicon:** Install the Xcode tools, CMake, and Ninja, then run `scripts/build-macos.sh`.
-- **Windows 11 x64:** Install the Visual Studio C++ build tools, a Windows SDK, Git, CMake, and Ninja, then run `scripts/build-windows.ps1`. Set `BRIGHTSYNC_RUN_TESTS=1` to also run the C++ tests and UDP simulation (Python 3 required for tests).
-- **Cross build on macOS:** Install MinGW-w64, CMake, and Ninja (e.g. `brew install mingw-w64 cmake ninja`) and run `scripts/build-windows-cross.sh`.
+- **macOS 13 or newer, Apple Silicon:** Install the Xcode tools, CMake, Ninja, and Go, then run `scripts/build-macos.sh`.
+- **Windows 11 x64:** Install the Visual Studio C++ build tools, a Windows SDK, Git, CMake, Ninja, and Go, then run `scripts/build-windows.ps1`. Set `BRIGHTSYNC_RUN_TESTS=1` to also run the C++ tests and UDP simulation (Python 3 required for tests).
+- **Cross build on macOS:** Install MinGW-w64, CMake, Ninja, and Go (e.g. `brew install mingw-w64 cmake ninja go`) and run `scripts/build-windows-cross.sh`.
 - ZIPs are written to `dist/`. The [build workflow](.github/workflows/build.yml) builds both ZIPs and runs simulations on GitHub-hosted macOS and Windows runners when the repo is pushed or the workflow is dispatched.
 - For an end-to-end simulation on two machines, quit the normal apps and start `BrightSync.exe --simulate` on Windows and `BrightSync.app/Contents/MacOS/BrightSync --simulate 145` on the Mac. The Windows app uses a mock monitor starting at 50%. Existing pairing works in simulation. A new pairing on the Windows simulation lasts until it exits. Re-pair in normal mode if you change the pairing during simulation. With the default curve the mock should approach 39%. Try another lux value by restarting the Mac simulation.
 - For a local sensor check, run `BrightSync.app/Contents/MacOS/BrightSync --read-sensor` with the lid open. Change the light near the screen and compare readings. On real hardware, also check brightness in the MSI on-screen menu, monitor power cycling, Mac sleep/wake, and both login options.
@@ -62,3 +72,7 @@ The code is used by BoringSSL’s SPAKE2 exchange to establish a separate 256-bi
 The macOS ZIP is ad hoc signed by default and is not notarized. Gatekeeper may block downloaded copies, and macOS may not reliably retain Local Network permission across ad hoc builds. For distribution, set `MACOS_SIGN_IDENTITY` to your Developer ID Application identity, sign with the hardened runtime, and [notarize and staple the app](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution). See [Apple's notes on Local Network identity](https://developer.apple.com/documentation/technotes/tn3179-understanding-local-network-privacy). The Windows EXE is unsigned and may trigger SmartScreen.
 
 See [RESEARCH.md](RESEARCH.md) for the upstream analysis and API choices. BrightSync is MIT licensed.
+
+## Sign releases for the updater
+
+Set `VERSION` and the platform version metadata, build both release ZIPs, then run `scripts/sign-release.sh <private-key-file> <zip-directory>`. Upload both ZIPs, `BrightSync-update.json`, and `BrightSync-update.sig` together in a release tagged `v<version>`. The signer checks the private key against the public key embedded in the updater. Keep the private key outside the repository and retain a secure backup so existing installations can verify future releases.

@@ -16,6 +16,9 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenuItemVali
     private let peer = NSMenuItem(title: "", action: nil, keyEquivalent: "")
     private var sync: NSMenuItem!
     private var login: NSMenuItem!
+    private let updates = Updates()
+    private var autoUpdate: NSMenuItem?
+    private var menuOpen = false
     private let simulated: Bool
 
     init(sensor: LightSensor, simulated: Bool) { self.sensor = sensor; self.simulated = simulated }
@@ -46,6 +49,17 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenuItemVali
         _ = add("Forget Pairing…", #selector(forget), to: menu, symbol: .forget)
         _ = add("Windows IP Address…", #selector(address), to: menu, symbol: .address)
         menu.addItem(.separator())
+        if !simulated {
+            autoUpdate = add("Automatic Updates", #selector(toggleUpdates), to: menu)
+            _ = add("Update Now…", #selector(updateNow), to: menu)
+            _ = add("GitHub Update Token…", #selector(updateToken), to: menu)
+            menu.addItem(.separator())
+            updates.canRestart = { [weak self] in
+                guard let self else { return false }
+                return self.awake && !self.menuOpen && self.pairingClient == nil
+            }
+            updates.start()
+        }
         _ = add("Quit", #selector(quit), to: menu, shortcut: "q")
         item.menu = menu
         let center = NSWorkspace.shared.notificationCenter
@@ -65,12 +79,20 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenuItemVali
     }
 
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
-        if menuItem == pairItem { return pairingClient == nil }
+        if menuItem == pairItem { return pairingClient == nil && !updates.busy }
+        if let action = menuItem.action, [#selector(toggleUpdates), #selector(updateNow), #selector(updateToken)].contains(action) {
+            return !updates.busy && pairingClient == nil
+        }
         if menuItem.action == #selector(forget) { return key != nil && pairingClient == nil }
         return true
     }
 
-    func menuWillOpen(_ menu: NSMenu) { refresh() }
+    func menuWillOpen(_ menu: NSMenu) { menuOpen = true; refresh() }
+    func menuDidClose(_ menu: NSMenu) { menuOpen = false }
+
+    @objc private func toggleUpdates() { updates.toggleAutomatic(); refresh() }
+    @objc private func updateNow() { updates.updateNow() }
+    @objc private func updateToken() { _ = updates.configure(); refresh() }
 
     private func refresh() {
         ambient.title = lux.map { String(format: "Ambient: %.1f lux%@", $0, simulated ? " (simulated)" : "") }
@@ -83,6 +105,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenuItemVali
         item.button?.toolTip = "BrightSync · " + status
         sync.state = enabled ? .on : .off
         login.state = SMAppService.mainApp.status == .enabled ? .on : .off
+        autoUpdate?.state = updates.automatic ? .on : .off
     }
 
     private func restart() {
@@ -115,6 +138,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenuItemVali
     @objc private func wake(_ note: Notification) { awake = true; restart() }
     @objc private func toggle() { defaults.set(!enabled, forKey: "enabled"); restart() }
     @objc private func quit() { NSApp.terminate(nil) }
+    func applicationWillTerminate(_ notification: Notification) { updates.cancel() }
 
     @objc private func toggleLogin() {
         let service = SMAppService.mainApp
